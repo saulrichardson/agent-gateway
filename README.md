@@ -123,3 +123,12 @@ if __name__ == "__main__":
 ```
 
 Call `client.stream_response(...)` if you want the raw Responses SSE events; `client.complete_response(...)` buffers the text for you. Pass `response_format={"type": "json_object"}` or `reasoning={"effort": "high"}` to forward advanced controls directly to OpenAI.
+
+## Optional EDGAR pipeline gateway
+
+The `gateway.edgar` module retains the EDGAR-specific `/jobs` workflow that fetches
+segments from tarballs, normalizes them, and builds prompts before calling OpenAI. It lives
+alongside the provider-agnostic API so repositories like
+`credit-agreement-extraction` can reuse the same code via a submodule. The module expects
+`edgar_filing_pipeline` to be importable (the credit project installs it), so avoid invoking
+`gateway.edgar.cli` in environments that lack those dependencies.
