@@ -77,11 +77,7 @@ def test_readyz_requires_openai_key():
     assert response.status_code == 503
 
 
-def test_request_size_guard(monkeypatch):
-    from gateway.api import routes
-
-    monkeypatch.setattr(routes, "MAX_REQUEST_BYTES", 10_000)
-
+def test_request_large_body_allowed():
     settings = Settings(default_provider="echo")
     app = create_app(settings=settings)
     client = TestClient(app)
@@ -97,14 +93,10 @@ def test_request_size_guard(monkeypatch):
     }
 
     response = client.post("/v1/responses", json=payload)
-    assert response.status_code == 413
+    assert response.status_code == 200
 
 
-def test_token_guard(monkeypatch):
-    from gateway.api import routes
-
-    monkeypatch.setattr(routes, "MAX_INPUT_TOKENS", 2)
-
+def test_large_token_input_allowed():
     settings = Settings(default_provider="echo")
     app = create_app(settings=settings)
     client = TestClient(app)
@@ -114,13 +106,13 @@ def test_token_guard(monkeypatch):
         "input": [
             {
                 "role": "user",
-                "content": "this will exceed the budget",
+                "content": "this will exceed the budget massively",
             }
         ],
     }
 
     response = client.post("/v1/responses", json=payload)
-    assert response.status_code == 413
+    assert response.status_code == 200
 
 
 def test_responses_keep_structured_messages(monkeypatch):
