@@ -77,8 +77,12 @@ def test_readyz_requires_openai_key():
     assert response.status_code == 503
 
 
-def test_request_size_guard():
-    settings = Settings(default_provider="echo", max_request_bytes=10_000)
+def test_request_size_guard(monkeypatch):
+    from gateway.api import routes
+
+    monkeypatch.setattr(routes, "MAX_REQUEST_BYTES", 10_000)
+
+    settings = Settings(default_provider="echo")
     app = create_app(settings=settings)
     client = TestClient(app)
 
@@ -96,8 +100,12 @@ def test_request_size_guard():
     assert response.status_code == 413
 
 
-def test_token_guard():
-    settings = Settings(default_provider="echo", max_input_tokens=2)
+def test_token_guard(monkeypatch):
+    from gateway.api import routes
+
+    monkeypatch.setattr(routes, "MAX_INPUT_TOKENS", 2)
+
+    settings = Settings(default_provider="echo")
     app = create_app(settings=settings)
     client = TestClient(app)
 

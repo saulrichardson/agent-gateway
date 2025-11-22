@@ -11,6 +11,7 @@ from ..settings import Settings
 from .base import BaseProvider, ProviderError, ProviderNotConfiguredError
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+DEFAULT_MAX_TOKENS = 2_048
 
 
 class OpenAIProvider(BaseProvider):
@@ -30,7 +31,7 @@ class OpenAIProvider(BaseProvider):
         payload: dict[str, Any] = {
             "model": request.model,
             "input": [_message_to_responses_format(msg) for msg in request.messages],
-            "max_output_tokens": request.max_tokens or self._settings.default_max_tokens,
+            "max_output_tokens": request.max_tokens or DEFAULT_MAX_TOKENS,
             "stream": False,
         }
 
@@ -91,7 +92,7 @@ class OpenAIProvider(BaseProvider):
         payload: dict[str, Any] = {
             "model": request.model,
             "input": [_message_to_responses_format(msg) for msg in request.messages],
-            "max_output_tokens": request.max_tokens or self._settings.default_max_tokens,
+            "max_output_tokens": request.max_tokens or DEFAULT_MAX_TOKENS,
             "stream": True,
         }
 

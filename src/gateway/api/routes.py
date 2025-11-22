@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
-import json
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,6 +22,11 @@ from .sse import format_event, sse_response
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+MAX_REQUEST_BYTES = 256_000
+MAX_INPUT_TOKENS = 6_000
+DEFAULT_MAX_TOKENS = 2_048
+STREAM_BUFFER_BYTES = 65_536
 
 
 def get_gateway(request: Request) -> GatewayService:
@@ -76,12 +81,12 @@ async def create_response(
     settings: Settings = gateway._settings
     raw_body = await request.body()
     bytes_in = _body_size(raw_body, payload, request)
-    _guard_body_size(bytes_in, settings)
+    _guard_body_size(bytes_in)
     provider_name, upstream_model = _parse_model_identifier(
         payload.model, settings.default_provider
     )
     chat_request = _to_chat_request(payload, provider_name, upstream_model)
-    _guard_token_budget(chat_request, settings)
+    _guard_token_budget(chat_request)
     trace_id = uuid.uuid4().hex
     bind_trace(trace_id=trace_id, provider=provider_name, model=upstream_model)
 
@@ -211,8 +216,8 @@ def _convert_message(message: ResponseInputMessage) -> Message:
     role = Role(message.role)
     content = _normalize_content(message.content)
     return Message(role=role, content=content)
-def _guard_body_size(length: int, settings: Settings) -> None:
-    if length > settings.max_request_bytes:
+def _guard_body_size(length: int) -> None:
+    if length > MAX_REQUEST_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={"error": {"message": "Request body too large", "code": "body_too_large"}},
@@ -231,9 +236,9 @@ def _body_size(raw_body: bytes, payload: ResponseRequest, request: Request) -> i
     return len(serialized.encode())
 
 
-def _guard_token_budget(request: ChatRequest, settings: Settings) -> None:
+def _guard_token_budget(request: ChatRequest) -> None:
     estimated = _estimate_tokens(request.messages)
-    if estimated > settings.max_input_tokens:
+    if estimated > MAX_INPUT_TOKENS:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={
@@ -275,8 +280,8 @@ async def _stream_openai(
         provider_request_id, upstream_stream = await provider.stream(
             chat_request,
             trace_id,
-            buffer_bytes=settings.stream_buffer_bytes,
-            max_bytes_out=settings.max_request_bytes * 4,
+            buffer_bytes=STREAM_BUFFER_BYTES,
+            max_bytes_out=MAX_REQUEST_BYTES * 4,
         )
     except Exception as exc:  # noqa: BLE001
         mapped = map_exception(exc, "openai")

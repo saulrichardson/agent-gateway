@@ -67,13 +67,6 @@ Attach `X-Request-ID` headers to correlate client requests with gateway traces.
 - The OpenAI adapter targets the Responses API (`/v1/responses`) so advanced models like `gpt-5-nano` can use reasoning controls by sending `reasoning_effort`. The Gemini adapter defaults to `gemini-2.5-pro-preview-03-25` on the public API unless you override it by passing a different model name.
 - The echo provider is always available for local testing and CI.
 
-Bandwidth and safety limits (override in `.env`):
-
-- `MAX_REQUEST_BYTES` (default `256000`)
-- `MAX_INPUT_TOKENS` (rough heuristic, default `6000`)
-- `DEFAULT_MAX_TOKENS` (used if client omits `max_output_tokens`, default `2048`)
-- `STREAM_BUFFER_BYTES` (chunk size when proxying upstream streams, default `65536`)
-
 ### Streaming contract
 
 - OpenAI requests are streamed through verbatim from the Responses API (SSE), including upstream event names and request IDs.

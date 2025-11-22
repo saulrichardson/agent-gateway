@@ -24,10 +24,6 @@ class Settings(BaseSettings):
     )
     gateway_timeout_seconds: float = Field(default=30.0, alias="GATEWAY_TIMEOUT_SECONDS")
     default_provider: str = Field(default="echo", alias="DEFAULT_PROVIDER")
-    max_request_bytes: int = Field(default=256_000, alias="MAX_REQUEST_BYTES")
-    default_max_tokens: int = Field(default=2_048, alias="DEFAULT_MAX_TOKENS")
-    stream_buffer_bytes: int = Field(default=65_536, alias="STREAM_BUFFER_BYTES")
-    max_input_tokens: int = Field(default=6_000, alias="MAX_INPUT_TOKENS")
 
     # Provider credentials (optional until you supply real keys)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_KEY")
