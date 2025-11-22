@@ -30,9 +30,9 @@ class OpenAIProvider(BaseProvider):
         payload: dict[str, Any] = {
             "model": request.model,
             "input": [_message_to_responses_format(msg) for msg in request.messages],
+            "max_output_tokens": request.max_tokens or self._settings.default_max_tokens,
+            "stream": False,
         }
-        if request.max_tokens:
-            payload["max_output_tokens"] = request.max_tokens
 
         reasoning = metadata.get("reasoning")
         if reasoning:
@@ -72,7 +72,79 @@ class OpenAIProvider(BaseProvider):
             trace_id=trace_id,
             conversation_id=request.conversation_id,
             agent_id=request.agent_id,
+            provider_request_id=response.headers.get("x-request-id"),
         )
+
+    async def stream(
+        self,
+        request: ChatRequest,
+        trace_id: str,
+        *,
+        buffer_bytes: int,
+        max_bytes_out: int | None = None,
+    ) -> tuple[str | None, httpx.AsyncByteStream]:
+        api_key = self._settings.openai_api_key
+        if not api_key:
+            raise ProviderNotConfiguredError("OPENAI_KEY is not configured")
+
+        metadata = request.metadata or {}
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "input": [_message_to_responses_format(msg) for msg in request.messages],
+            "max_output_tokens": request.max_tokens or self._settings.default_max_tokens,
+            "stream": True,
+        }
+
+        reasoning = metadata.get("reasoning")
+        if reasoning:
+            payload["reasoning"] = reasoning
+
+        response_format = metadata.get("response_format")
+        if response_format:
+            payload["response_format"] = response_format
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        response = await self._client.stream(
+            "POST",
+            OPENAI_RESPONSES_URL,
+            json=payload,
+            headers=headers,
+            timeout=self._settings.gateway_timeout_seconds,
+        )
+
+        if response.status_code >= 400:
+            body = await response.aread()
+            await response.aclose()
+            raise ProviderError(
+                f"OpenAI error {response.status_code}: {body.decode(errors='replace')}",
+                status_code=response.status_code,
+                provider_request_id=response.headers.get("x-request-id"),
+            )
+
+        provider_request_id = response.headers.get("x-request-id")
+
+        async def iterator() -> httpx.AsyncIterator[bytes]:
+            bytes_out = 0
+            try:
+                async for chunk in response.aiter_raw(chunk_size=buffer_bytes):
+                    if not chunk:
+                        continue
+                    bytes_out += len(chunk)
+                    if max_bytes_out and bytes_out > max_bytes_out:
+                        raise ProviderError(
+                            "OpenAI stream exceeded configured byte budget",
+                            status_code=502,
+                            provider_request_id=provider_request_id,
+                        )
+                    yield chunk
+            finally:
+                await response.aclose()
+
+        return provider_request_id, iterator()
 
 
 def _message_to_responses_format(message: Message) -> dict[str, Any]:

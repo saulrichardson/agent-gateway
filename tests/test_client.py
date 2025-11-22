@@ -15,7 +15,8 @@ def test_build_user_message_with_image(tmp_path):
     assert message["content"][0]["type"] == "input_text"
     image_chunk = message["content"][1]
     assert image_chunk["type"] == "input_image"
-    assert "image_base64" in image_chunk
+    assert "image_url" in image_chunk
+    assert image_chunk["image_url"].startswith("data:image")
 
 
 def test_build_user_message_text_only():

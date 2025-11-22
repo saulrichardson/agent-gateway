@@ -68,6 +68,53 @@ def test_healthz():
     assert response.json()["status"] == "ok"
 
 
+def test_readyz_requires_openai_key():
+    settings = Settings(default_provider="echo", openai_api_key=None)
+    app = create_app(settings=settings)
+    client = TestClient(app)
+
+    response = client.get("/readyz")
+    assert response.status_code == 503
+
+
+def test_request_size_guard():
+    settings = Settings(default_provider="echo", max_request_bytes=10_000)
+    app = create_app(settings=settings)
+    client = TestClient(app)
+
+    payload = {
+        "model": "echo:test-model",
+        "input": [
+            {
+                "role": "user",
+                "content": "x" * 12000,
+            }
+        ],
+    }
+
+    response = client.post("/v1/responses", json=payload)
+    assert response.status_code == 413
+
+
+def test_token_guard():
+    settings = Settings(default_provider="echo", max_input_tokens=2)
+    app = create_app(settings=settings)
+    client = TestClient(app)
+
+    payload = {
+        "model": "echo:test-model",
+        "input": [
+            {
+                "role": "user",
+                "content": "this will exceed the budget",
+            }
+        ],
+    }
+
+    response = client.post("/v1/responses", json=payload)
+    assert response.status_code == 413
+
+
 def test_responses_keep_structured_messages(monkeypatch):
     settings = Settings(default_provider="echo")
     app = create_app(settings=settings)
@@ -88,7 +135,7 @@ def test_responses_keep_structured_messages(monkeypatch):
     monkeypatch.setattr(GatewayService, "chat", fake_chat)
 
     payload = {
-        "model": "openai:gpt-5-nano",
+        "model": "echo:test-model",
         "input": [
             {
                 "role": "user",

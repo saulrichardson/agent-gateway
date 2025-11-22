@@ -6,9 +6,10 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
+import json
 
 import structlog
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.responses import StreamingResponse
 
 from ..logging import bind_trace
@@ -38,6 +39,34 @@ async def health_check(request: Request) -> dict[str, object]:
     }
 
 
+@router.get("/readyz")
+async def readiness(request: Request) -> dict[str, object]:
+    gateway = get_gateway(request)
+    settings: Settings = gateway._settings
+    ready = bool(settings.openai_api_key)
+    details: dict[str, object] = {"openai_key": bool(settings.openai_api_key)}
+
+    if settings.openai_api_key:
+        try:
+            resp = await gateway._client.get(
+                "https://api.openai.com/",
+                timeout=2.0,
+            )
+            details["openai_reachable"] = resp.status_code < 500
+            ready = ready and resp.status_code < 500
+        except Exception:  # noqa: BLE001
+            details["openai_reachable"] = False
+            ready = False
+
+    if not ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "details": details},
+        )
+
+    return {"status": "ready", "details": details}
+
+
 @router.post("/v1/responses")
 async def create_response(
     payload: ResponseRequest,
@@ -45,14 +74,28 @@ async def create_response(
     gateway: GatewayService = Depends(get_gateway),
 ) -> StreamingResponse:
     settings: Settings = gateway._settings
+    raw_body = await request.body()
+    bytes_in = _body_size(raw_body, payload, request)
+    _guard_body_size(bytes_in, settings)
     provider_name, upstream_model = _parse_model_identifier(
         payload.model, settings.default_provider
     )
     chat_request = _to_chat_request(payload, provider_name, upstream_model)
+    _guard_token_budget(chat_request, settings)
     trace_id = uuid.uuid4().hex
     bind_trace(trace_id=trace_id, provider=provider_name, model=upstream_model)
 
     start = time.perf_counter()
+    if provider_name == "openai":
+        return await _stream_openai(
+            gateway=gateway,
+            chat_request=chat_request,
+            trace_id=trace_id,
+            upstream_model=upstream_model,
+            bytes_in=bytes_in,
+            start=start,
+        )
+
     try:
         response = await gateway.chat(chat_request, trace_id=trace_id)
     except Exception as exc:  # noqa: BLE001
@@ -114,6 +157,7 @@ async def create_response(
             ttft_ms=round(ttft * 1000, 2),
             duration_ms=round(duration * 1000, 2),
             usage=response.usage,
+            bytes_in=bytes_in,
         )
 
     return sse_response(event_generator())
@@ -167,6 +211,120 @@ def _convert_message(message: ResponseInputMessage) -> Message:
     role = Role(message.role)
     content = _normalize_content(message.content)
     return Message(role=role, content=content)
+def _guard_body_size(length: int, settings: Settings) -> None:
+    if length > settings.max_request_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"error": {"message": "Request body too large", "code": "body_too_large"}},
+        )
+
+
+def _body_size(raw_body: bytes, payload: ResponseRequest, request: Request) -> int:
+    if raw_body:
+        return len(raw_body)
+
+    header_value = request.headers.get("content-length")
+    if header_value and header_value.isdigit():
+        return int(header_value)
+
+    serialized = json.dumps(payload.model_dump(exclude_none=True), separators=(",", ":"))
+    return len(serialized.encode())
+
+
+def _guard_token_budget(request: ChatRequest, settings: Settings) -> None:
+    estimated = _estimate_tokens(request.messages)
+    if estimated > settings.max_input_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "error": {
+                    "message": "Input too large for configured token budget",
+                    "code": "input_too_large",
+                }
+            },
+        )
+
+
+def _estimate_tokens(messages: list[Message]) -> int:
+    total_chars = 0
+    for msg in messages:
+        text = msg.as_text()
+        if text:
+            total_chars += len(text)
+    # Rough heuristic: 1 token ≈ 4 characters
+    return total_chars // 4
+
+
+async def _stream_openai(
+    gateway: GatewayService,
+    chat_request: ChatRequest,
+    trace_id: str,
+    upstream_model: str,
+    bytes_in: int | None,
+    start: float,
+) -> StreamingResponse:
+    settings: Settings = gateway._settings
+    provider = gateway.providers.get("openai")
+    if provider is None or not hasattr(provider, "stream"):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail={"error": {"message": "OpenAI streaming unavailable"}},
+        )
+
+    try:
+        provider_request_id, upstream_stream = await provider.stream(
+            chat_request,
+            trace_id,
+            buffer_bytes=settings.stream_buffer_bytes,
+            max_bytes_out=settings.max_request_bytes * 4,
+        )
+    except Exception as exc:  # noqa: BLE001
+        mapped = map_exception(exc, "openai")
+        logger.warning(
+            "response.failed",
+            trace_id=trace_id,
+            provider="openai",
+            model=upstream_model,
+            error=str(exc),
+        )
+        raise mapped from exc
+
+    first_chunk_at: float | None = None
+    bytes_out = 0
+
+    async def passthrough() -> AsyncIterator[bytes]:
+        nonlocal first_chunk_at, bytes_out
+        async for chunk in upstream_stream:
+            if chunk:
+                if first_chunk_at is None:
+                    first_chunk_at = time.perf_counter()
+                bytes_out += len(chunk)
+                yield chunk
+
+        duration = time.perf_counter() - start
+        ttft = (first_chunk_at - start) if first_chunk_at else duration
+        logger.info(
+            "response.stream_complete",
+            trace_id=trace_id,
+            provider="openai",
+            model=upstream_model,
+            ttft_ms=round(ttft * 1000, 2),
+            duration_ms=round(duration * 1000, 2),
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
+            provider_request_id=provider_request_id,
+        )
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        "x-request-id": trace_id,
+    }
+    if provider_request_id:
+        headers["x-provider-request-id"] = provider_request_id
+
+    return StreamingResponse(passthrough(), media_type="text/event-stream", headers=headers)
 
 
 def _normalize_content(content: Any) -> Any:

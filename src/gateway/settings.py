@@ -12,13 +12,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime settings loaded from environment or .env."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     environment: Literal["development", "staging", "production"] = Field(
         default="development", alias="ENVIRONMENT"
     )
     gateway_timeout_seconds: float = Field(default=30.0, alias="GATEWAY_TIMEOUT_SECONDS")
     default_provider: str = Field(default="echo", alias="DEFAULT_PROVIDER")
+    max_request_bytes: int = Field(default=256_000, alias="MAX_REQUEST_BYTES")
+    default_max_tokens: int = Field(default=2_048, alias="DEFAULT_MAX_TOKENS")
+    stream_buffer_bytes: int = Field(default=65_536, alias="STREAM_BUFFER_BYTES")
+    max_input_tokens: int = Field(default=6_000, alias="MAX_INPUT_TOKENS")
 
     # Provider credentials (optional until you supply real keys)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_KEY")

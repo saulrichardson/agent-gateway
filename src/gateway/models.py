@@ -57,6 +57,7 @@ class ChatResponse(BaseModel):
     trace_id: str
     conversation_id: str | None = None
     agent_id: str | None = None
+    provider_request_id: str | None = None
 
 
 class AgentEnvelope(BaseModel):
