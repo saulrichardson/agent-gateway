@@ -5,6 +5,7 @@ from gateway.models import ChatResponse
 from gateway.providers import ProviderError
 from gateway.services.gateway import GatewayService
 from gateway.settings import Settings
+from gateway.api.schemas import ResponseRequest, ResponseInputMessage
 
 
 def test_responses_stream_events():
@@ -157,3 +158,16 @@ def test_responses_keep_structured_messages(monkeypatch):
     structured = captured["messages"][0].content
     assert isinstance(structured, list)
     assert structured[1]["type"] == "input_image"
+
+
+def test_default_reasoning_applied_for_openai_in_request_build():
+    from gateway.api.routes import _to_chat_request
+
+    payload = ResponseRequest(
+        model="openai:gpt-5-nano",
+        input=[ResponseInputMessage(role="user", content="hi")],
+    )
+
+    chat_request = _to_chat_request(payload, provider="openai", upstream_model="gpt-5-nano")
+
+    assert chat_request.metadata["reasoning"]["effort"] == "medium"

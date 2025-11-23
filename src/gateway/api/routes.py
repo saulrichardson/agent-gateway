@@ -192,6 +192,8 @@ def _to_chat_request(payload: ResponseRequest, provider: str, upstream_model: st
     metadata: dict[str, Any] = dict(payload.metadata or {})
     if payload.reasoning:
         metadata["reasoning"] = payload.reasoning
+    elif provider == "openai" and upstream_model.startswith("gpt-5"):
+        metadata["reasoning"] = {"effort": "medium"}
     if payload.response_format:
         metadata["response_format"] = payload.response_format
 

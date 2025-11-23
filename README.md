@@ -62,8 +62,8 @@ Attach `X-Request-ID` headers to correlate client requests with gateway traces.
 ### Provider configuration
 
 - Set `OPENAI_KEY`, `GEMINI_KEY`, `CLAUDE_KEY`, etc. in `.env`.
-- Choose a default provider (`DEFAULT_PROVIDER=echo`, `openai`, `gemini`, or `claude`).
-- Prefix the `model` field with the provider when calling `/v1/responses` (e.g. `"openai:gpt-5-nano"`, `"gemini:gemini-2.5-pro-preview-03-25"`, or `"echo:test-model"`). If no prefix is supplied, the default provider is used.
+- Choose a default provider (`DEFAULT_PROVIDER=openai`, `echo`, `gemini`, or `claude`).
+- Prefix the `model` field with the provider when calling `/v1/responses` (e.g. `"openai:gpt-5-nano"`, `"gemini:gemini-2.5-pro-preview-03-25"`, or `"echo:test-model"`). If no prefix is supplied, the default provider (`openai`) is used.
 - The OpenAI adapter targets the Responses API (`/v1/responses`) so advanced models like `gpt-5-nano` can use reasoning controls by sending `reasoning_effort`. The Gemini adapter defaults to `gemini-2.5-pro-preview-03-25` on the public API unless you override it by passing a different model name.
 - The echo provider is always available for local testing and CI.
 
