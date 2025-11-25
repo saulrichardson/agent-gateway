@@ -23,10 +23,6 @@ dependencies = [
 [tool.poetry]
 packages = [{include = "gateway", from = "src"}]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.4.2,<9.0.0"
-pytest-cov = ">=7.0.0,<8.0.0"
-
 [project.scripts]
 gateway = "gateway.__main__:main"
 
@@ -62,11 +58,6 @@ show_error_codes = true
 pretty = true
 exclude = ["tests/.*", "scratchpad/.*"]
 
-[tool.pytest.ini_options]
-minversion = "8.0"
-addopts = "-q --disable-warnings --maxfail=1"
-testpaths = ["tests"]
-
 [tool.coverage.run]
 branch = true
 source = ["gateway"]
@@ -81,7 +72,5 @@ dev = [
     "black (>=25.9.0,<26.0.0)",
     "ruff (>=0.14.3,<0.15.0)",
     "mypy (>=1.18.2,<2.0.0)",
-    "pytest (>=8.4.2,<9.0.0)",
-    "pytest-cov (>=7.0.0,<8.0.0)",
     "pre-commit (>=4.3.0,<5.0.0)"
 ]

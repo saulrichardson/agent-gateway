@@ -41,13 +41,17 @@ poetry run pre-commit install
 
 ## Running the gateway
 
+Use the Makefile as the single entry point:
+
 ```bash
-poetry run gateway --reload
-# or
-poetry run uvicorn gateway.app:create_app --factory --host 0.0.0.0 --port 8000
-# Docker (from repo root)
+# local dev (reload)
+make serve
+
+# containerized
 make docker-build
-make docker-up
+make start      # brings the gateway up via docker compose
+make restart    # down + up
+make stop       # tear down containers
 ```
 
 Key endpoints:
@@ -62,8 +66,8 @@ Attach `X-Request-ID` headers to correlate client requests with gateway traces.
 ### Provider configuration
 
 - Set `OPENAI_KEY`, `GEMINI_KEY`, `CLAUDE_KEY`, etc. in `.env`.
-- Choose a default provider (`DEFAULT_PROVIDER=openai`, `echo`, `gemini`, or `claude`).
-- Prefix the `model` field with the provider when calling `/v1/responses` (e.g. `"openai:gpt-5-nano"`, `"gemini:gemini-2.5-pro-preview-03-25"`, or `"echo:test-model"`). If no prefix is supplied, the default provider (`openai`) is used.
+- Choose a default provider by prefixing the model (e.g. `"openai:gpt-5-nano"`, `"gemini:gemini-2.5-pro-preview-03-25"`, or `"echo:test-model"`). No provider is assumed if you omit the prefix.
+- Prefix the `model` field with the provider when calling `/v1/responses`; if you omit it and no `DEFAULT_PROVIDER` is set in the environment, the request will fail with `provider_required`.
 - The OpenAI adapter targets the Responses API (`/v1/responses`) so advanced models like `gpt-5-nano` can use reasoning controls by sending `reasoning_effort`. The Gemini adapter defaults to `gemini-2.5-pro-preview-03-25` on the public API unless you override it by passing a different model name.
 - The echo provider is always available for local testing and CI.
 
@@ -120,6 +124,19 @@ if __name__ == "__main__":
 ```
 
 Call `client.stream_response(...)` if you want the raw Responses SSE events; `client.complete_response(...)` buffers the text for you. Pass `response_format={"type": "json_object"}` or `reasoning={"effort": "high"}` to forward advanced controls directly to OpenAI.
+
+Need a blocking/synchronous call? Use `complete_response_sync` which wraps the async client internally:
+
+```python
+from gateway.client import complete_response_sync
+
+text = complete_response_sync(
+    model="echo:test-model",
+    prompt="Hello from a sync call",
+    base_url="http://localhost:8000",  # defaults to env GATEWAY_URL or 127.0.0.1:8000
+)
+print(text)
+```
 
 ## Optional EDGAR pipeline gateway
 

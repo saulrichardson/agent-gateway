@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
 import httpx
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = os.getenv("GATEWAY_URL", "http://127.0.0.1:8000")
 
 
 class GatewayAgentClient:
@@ -147,3 +149,40 @@ def _image_chunk_from_path(path: str) -> dict[str, Any]:
         "image_url": data_url,
     }
     return chunk
+
+
+# --- Synchronous convenience wrappers -------------------------------------------------
+
+
+def complete_response_sync(
+    *,
+    model: str,
+    prompt: str,
+    base_url: str = DEFAULT_BASE_URL,
+    response_format: dict[str, Any] | None = None,
+    reasoning: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+) -> str:
+    """Blocking helper that wraps GatewayAgentClient.complete_response.
+
+    Note: uses asyncio.run under the hood, so prefer the async API when already
+    inside an event loop.
+    """
+
+    async def _run() -> str:
+        message = build_user_message(prompt)
+        async with GatewayAgentClient(base_url=base_url) as client:
+            result = await client.complete_response(
+                model=model,
+                input_messages=[message],
+                response_format=response_format,
+                reasoning=reasoning,
+                metadata=metadata,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
+            return result["text"]
+
+    return asyncio.run(_run())

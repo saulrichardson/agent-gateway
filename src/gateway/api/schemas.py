@@ -13,7 +13,7 @@ class ResponseInputMessage(BaseModel):
 
 
 class ResponseRequest(BaseModel):
-    model: str = "openai:gpt-5-nano"
+    model: str
     input: list[ResponseInputMessage]
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_output_tokens: int | None = Field(default=None, gt=0)

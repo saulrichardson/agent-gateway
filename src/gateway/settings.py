@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         default="development", alias="ENVIRONMENT"
     )
     gateway_timeout_seconds: float = Field(default=30.0, alias="GATEWAY_TIMEOUT_SECONDS")
-    default_provider: str = Field(default="openai", alias="DEFAULT_PROVIDER")
+    default_provider: str | None = Field(default=None, alias="DEFAULT_PROVIDER")
 
     # Provider credentials (optional until you supply real keys)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_KEY")

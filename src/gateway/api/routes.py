@@ -76,9 +76,12 @@ async def create_response(
     settings: Settings = gateway._settings
     raw_body = await request.body()
     bytes_in = _body_size(raw_body, payload, request)
-    provider_name, upstream_model = _parse_model_identifier(
-        payload.model, settings.default_provider
-    )
+    provider_name, upstream_model = _parse_model_identifier(payload.model, settings.default_provider)
+    if provider_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"message": "Provider must be specified", "code": "provider_required"}},
+        )
     chat_request = _to_chat_request(payload, provider_name, upstream_model)
     trace_id = uuid.uuid4().hex
     bind_trace(trace_id=trace_id, provider=provider_name, model=upstream_model)
@@ -184,7 +187,9 @@ def _parse_model_identifier(model: str, default_provider: str) -> tuple[str, str
     if ":" in model:
         provider, upstream = model.split(":", 1)
         return provider.lower(), upstream
-    return default_provider, model
+    if default_provider:
+        return default_provider, model
+    return None, model
 
 
 def _to_chat_request(payload: ResponseRequest, provider: str, upstream_model: str) -> ChatRequest:
@@ -192,8 +197,6 @@ def _to_chat_request(payload: ResponseRequest, provider: str, upstream_model: st
     metadata: dict[str, Any] = dict(payload.metadata or {})
     if payload.reasoning:
         metadata["reasoning"] = payload.reasoning
-    elif provider == "openai" and upstream_model.startswith("gpt-5"):
-        metadata["reasoning"] = {"effort": "medium"}
     if payload.response_format:
         metadata["response_format"] = payload.response_format
 

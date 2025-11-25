@@ -1,4 +1,4 @@
-.PHONY: install lint format test type-check pre-commit serve smoke docker-build docker-up docker-down
+.PHONY: install lint format test type-check pre-commit serve smoke docker-build docker-up docker-down start stop restart
 
 install:
 	poetry install
@@ -21,6 +21,12 @@ type-check:
 serve:
 	poetry run gateway --reload
 
+start: docker-up
+
+stop: docker-down
+
+restart: stop start
+
 smoke:
 	poetry run python scripts/smoke_tests.py
 
@@ -29,3 +35,6 @@ docker-build:
 
 docker-up:
 	docker compose -f docker/docker-compose.yml up
+
+docker-down:
+	docker compose -f docker/docker-compose.yml down
