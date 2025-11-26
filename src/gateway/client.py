@@ -102,8 +102,13 @@ class GatewayAgentClient:
             max_output_tokens=max_output_tokens,
         ):
             if event["event"] == "response.output_text.delta":
-                output_text = event["data"].get("output_text") or []
-                deltas.append("".join(str(chunk) for chunk in output_text))
+                data = event["data"] or {}
+                if "delta" in data:
+                    delta_text = data.get("delta") or ""
+                else:
+                    output_text = data.get("output_text") or []
+                    delta_text = "".join(str(chunk) for chunk in output_text)
+                deltas.append(str(delta_text))
             elif event["event"] == "response.completed":
                 completed_payload = event["data"]
 
@@ -164,6 +169,7 @@ def complete_response_sync(
     metadata: dict[str, Any] | None = None,
     temperature: float | None = None,
     max_output_tokens: int | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Blocking helper that wraps GatewayAgentClient.complete_response.
 
@@ -173,7 +179,7 @@ def complete_response_sync(
 
     async def _run() -> str:
         message = build_user_message(prompt)
-        async with GatewayAgentClient(base_url=base_url) as client:
+        async with GatewayAgentClient(base_url=base_url, timeout=timeout or 30.0) as client:
             result = await client.complete_response(
                 model=model,
                 input_messages=[message],
