@@ -110,7 +110,7 @@ class OpenAIProvider(BaseProvider):
             "Content-Type": "application/json",
         }
 
-        response = await self._client.stream(
+        response_cm = self._client.stream(
             "POST",
             OPENAI_RESPONSES_URL,
             json=payload,
@@ -118,20 +118,19 @@ class OpenAIProvider(BaseProvider):
             timeout=self._settings.gateway_timeout_seconds,
         )
 
-        if response.status_code >= 400:
-            body = await response.aread()
-            await response.aclose()
-            raise ProviderError(
-                f"OpenAI error {response.status_code}: {body.decode(errors='replace')}",
-                status_code=response.status_code,
-                provider_request_id=response.headers.get("x-request-id"),
-            )
-
-        provider_request_id = response.headers.get("x-request-id")
-
         async def iterator() -> httpx.AsyncIterator[bytes]:
             bytes_out = 0
-            try:
+            async with response_cm as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise ProviderError(
+                        f"OpenAI error {response.status_code}: {body.decode(errors='replace')}",
+                        status_code=response.status_code,
+                        provider_request_id=response.headers.get("x-request-id"),
+                    )
+
+                provider_request_id = response.headers.get("x-request-id")
+
                 async for chunk in response.aiter_raw(chunk_size=buffer_bytes):
                     if not chunk:
                         continue
@@ -143,10 +142,9 @@ class OpenAIProvider(BaseProvider):
                             provider_request_id=provider_request_id,
                         )
                     yield chunk
-            finally:
-                await response.aclose()
 
-        return provider_request_id, iterator()
+        # Provider request id is only available once the stream starts; return None here.
+        return None, iterator()
 
 
 def _message_to_responses_format(message: Message) -> dict[str, Any]:
