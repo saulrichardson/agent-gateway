@@ -86,4 +86,4 @@ def _provider_request_id(response: httpx.Response) -> str | None:
 def _truncate(text: str, limit: int = 2000) -> str:
     if len(text) <= limit:
         return text
-    return f\"{text[:limit]}...[truncated {len(text) - limit} chars]\"
+    return f"{text[:limit]}...[truncated {len(text) - limit} chars]"
