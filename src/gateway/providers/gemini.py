@@ -35,10 +35,11 @@ class GeminiProvider(BaseProvider):
 
         response = await self._client.post(url, json=payload)
         if response.status_code >= 400:
+            body = response.text or ""
             raise ProviderError(
-                f"Gemini error {response.status_code}: {response.text}",
+                f"Gemini error {response.status_code}: {_truncate(body)}",
                 status_code=response.status_code,
-                provider_request_id=response.headers.get("x-request-id"),
+                provider_request_id=_provider_request_id(response),
             )
 
         data = response.json()
@@ -72,3 +73,17 @@ def _message_to_gemini(message: Message) -> dict[str, Any]:
 
 def _normalize_model(model_name: str) -> str:
     return model_name.removeprefix("models/")
+
+
+def _provider_request_id(response: httpx.Response) -> str | None:
+    return (
+        response.headers.get("x-request-id")
+        or response.headers.get("x-goog-request-id")
+        or response.headers.get("x-cloud-trace-context")
+    )
+
+
+def _truncate(text: str, limit: int = 2000) -> str:
+    if len(text) <= limit:
+        return text
+    return f\"{text[:limit]}...[truncated {len(text) - limit} chars]\"

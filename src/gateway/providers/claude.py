@@ -46,10 +46,11 @@ class ClaudeProvider(BaseProvider):
             headers=headers,
         )
         if response.status_code >= 400:
+            body = response.text or ""
             raise ProviderError(
-                f"Claude error {response.status_code}: {response.text}",
+                f"Claude error {response.status_code}: {_truncate(body)}",
                 status_code=response.status_code,
-                provider_request_id=response.headers.get("x-request-id"),
+                provider_request_id=_provider_request_id(response),
             )
 
         data = response.json()
@@ -66,3 +67,17 @@ class ClaudeProvider(BaseProvider):
             conversation_id=request.conversation_id,
             agent_id=request.agent_id,
         )
+
+
+def _provider_request_id(response: httpx.Response) -> str | None:
+    return (
+        response.headers.get("x-request-id")
+        or response.headers.get("anthropic-request-id")
+        or response.headers.get("x-cloud-trace-context")
+    )
+
+
+def _truncate(text: str, limit: int = 2000) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...[truncated {len(text) - limit} chars]"
