@@ -143,7 +143,7 @@ class OpenAIProvider(BaseProvider):
                         )
                     yield chunk
 
-        # Provider request id is only available once the stream starts; return None here.
+        # Provider request id is not known until the iterator starts; return None for headers.
         return None, iterator()
 
 
