@@ -122,8 +122,13 @@ def build_user_message(
     prompt: str,
     *,
     image_paths: Sequence[str] | None = None,
+    image_bytes: Sequence[bytes] | None = None,
+    image_mime_type: str | None = None,
 ) -> dict[str, Any]:
-    """Create a user message that optionally bundles local images as input_image parts."""
+    """Create a user message that optionally bundles images as input_image parts.
+
+    Supports passing paths on disk or already-loaded image bytes (PNG/JPEG, etc.).
+    """
 
     chunks: list[dict[str, Any]] = []
     if prompt:
@@ -131,6 +136,9 @@ def build_user_message(
 
     for path in image_paths or []:
         chunks.append(_image_chunk_from_path(path))
+
+    for blob in image_bytes or []:
+        chunks.append(_image_chunk_from_bytes(blob, mime_type=image_mime_type))
 
     if not chunks:
         raise ValueError("A prompt and/or at least one image must be supplied.")
@@ -154,6 +162,18 @@ def _image_chunk_from_path(path: str) -> dict[str, Any]:
         "image_url": data_url,
     }
     return chunk
+
+
+def _image_chunk_from_bytes(data: bytes, *, mime_type: str | None = None) -> dict[str, Any]:
+    if not isinstance(data, (bytes, bytearray)):
+        raise TypeError("image_bytes entries must be bytes or bytearray")
+
+    encoded = base64.b64encode(bytes(data)).decode("utf-8")
+    data_url = f"data:{mime_type or 'image/png'};base64,{encoded}"
+    return {
+        "type": "input_image",
+        "image_url": data_url,
+    }
 
 
 # --- Synchronous convenience wrappers -------------------------------------------------
