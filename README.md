@@ -48,7 +48,7 @@ Docker: `make docker-build && make start` (compose file in `docker/`).
 
 ## Agent helper
 
-`gateway.client.GatewayAgentClient` wraps the SSE stream so agents can consume responses easily; `complete_response_sync` provides a blocking helper for quick scripts.
+`gateway.client.GatewayAgentClient` wraps the SSE stream so agents can consume responses easily; `complete_response_sync` provides a blocking helper for quick scripts.  Use `build_user_message(prompt, image_paths=[...])` or `build_user_message(prompt, image_bytes=[...])` to attach images.
 
 ## EDGAR pipeline (optional)
 
