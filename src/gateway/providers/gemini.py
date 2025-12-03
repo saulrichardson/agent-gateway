@@ -64,11 +64,46 @@ class GeminiProvider(BaseProvider):
 
 def _message_to_gemini(message: Message) -> dict[str, Any]:
     role = "user" if message.role.value == "user" else "model"
-    text = message.as_text()
-    return {
-        "role": role,
-        "parts": [{"text": text}],
-    }
+
+    def _chunk_to_part(chunk: Any) -> dict[str, Any]:
+        # Text chunk
+        if isinstance(chunk, str):
+            return {"text": chunk}
+
+        if isinstance(chunk, dict):
+            # Explicit input_text chunk
+            if chunk.get("type") == "input_text" and "text" in chunk:
+                return {"text": str(chunk.get("text", ""))}
+
+            # Input image provided as data URL
+            if chunk.get("type") == "input_image":
+                data_url = chunk.get("image_url") or ""
+                if data_url.startswith("data:") and ";base64," in data_url:
+                    mime, b64 = data_url.split(";base64,", 1)
+                    mime = mime.split(":", 1)[1] if ":" in mime else "image/png"
+                    return {"inline_data": {"mime_type": mime, "data": b64}}
+
+            # Raw inline data already base64 encoded
+            if "image_base64" in chunk:
+                return {"inline_data": {"mime_type": "image/png", "data": chunk["image_base64"]}}
+
+            if "text" in chunk:
+                return {"text": str(chunk["text"])}
+
+        # Fallback to text-only representation
+        return {"text": message.as_text()}
+
+    content = message.content
+    parts: list[dict[str, Any]] = []
+
+    if isinstance(content, list):
+        parts = [_chunk_to_part(c) for c in content]
+    elif isinstance(content, dict):
+        parts = [_chunk_to_part(content)]
+    else:
+        parts = [{"text": message.as_text()}]
+
+    return {"role": role, "parts": parts}
 
 
 def _normalize_model(model_name: str) -> str:
