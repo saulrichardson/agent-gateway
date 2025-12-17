@@ -40,11 +40,17 @@ class ClaudeProvider(BaseProvider):
             "messages": [message.model_dump(exclude_none=True) for message in request.messages],
         }
 
-        response = await self._client.post(
-            CLAUDE_BASE_URL,
-            json=payload,
-            headers=headers,
-        )
+        try:
+            response = await self._client.post(
+                CLAUDE_BASE_URL,
+                json=payload,
+                headers=headers,
+                timeout=self._settings.gateway_timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(f"Claude request timed out: {exc}", status_code=504) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError(f"Claude request failed: {exc}", status_code=502) from exc
         if response.status_code >= 400:
             body = response.text or ""
             raise ProviderError(

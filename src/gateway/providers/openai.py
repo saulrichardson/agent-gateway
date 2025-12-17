@@ -110,12 +110,17 @@ class OpenAIProvider(BaseProvider):
             "Content-Type": "application/json",
         }
 
+        t = float(self._settings.gateway_timeout_seconds)
+        # For SSE streaming, disable per-chunk read timeouts so long generations
+        # don't trigger spurious ReadTimeouts, while keeping connect/write bounded.
+        stream_timeout = httpx.Timeout(connect=t, read=None, write=t, pool=t)
+
         response_cm = self._client.stream(
             "POST",
             OPENAI_RESPONSES_URL,
             json=payload,
             headers=headers,
-            timeout=self._settings.gateway_timeout_seconds,
+            timeout=stream_timeout,
         )
 
         async def iterator() -> httpx.AsyncIterator[bytes]:
@@ -131,17 +136,24 @@ class OpenAIProvider(BaseProvider):
 
                 provider_request_id = response.headers.get("x-request-id")
 
-                async for chunk in response.aiter_raw(chunk_size=buffer_bytes):
-                    if not chunk:
-                        continue
-                    bytes_out += len(chunk)
-                    if max_bytes_out and bytes_out > max_bytes_out:
-                        raise ProviderError(
-                            "OpenAI stream exceeded configured byte budget",
-                            status_code=502,
-                            provider_request_id=provider_request_id,
-                        )
-                    yield chunk
+                try:
+                    async for chunk in response.aiter_raw(chunk_size=buffer_bytes):
+                        if not chunk:
+                            continue
+                        bytes_out += len(chunk)
+                        if max_bytes_out and bytes_out > max_bytes_out:
+                            raise ProviderError(
+                                "OpenAI stream exceeded configured byte budget",
+                                status_code=502,
+                                provider_request_id=provider_request_id,
+                            )
+                        yield chunk
+                except httpx.TimeoutException as exc:
+                    raise ProviderError(
+                        f"OpenAI stream timed out: {exc}",
+                        status_code=504,
+                        provider_request_id=provider_request_id,
+                    ) from exc
 
         # Provider request id is not known until the iterator starts; return None for headers.
         return None, iterator()

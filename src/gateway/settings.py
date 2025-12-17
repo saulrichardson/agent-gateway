@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = Field(
         default="development", alias="ENVIRONMENT"
     )
-    gateway_timeout_seconds: float = Field(default=30.0, alias="GATEWAY_TIMEOUT_SECONDS")
+    # Default timeout for upstream provider calls. Vision OCR can legitimately take
+    # longer than 30s, so use a more forgiving default; can be overridden via .env.
+    gateway_timeout_seconds: float = Field(default=120.0, alias="GATEWAY_TIMEOUT_SECONDS")
     default_provider: str | None = Field(default=None, alias="DEFAULT_PROVIDER")
 
     # Provider credentials (optional until you supply real keys)

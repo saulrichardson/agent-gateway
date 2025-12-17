@@ -33,7 +33,16 @@ class GeminiProvider(BaseProvider):
         contents = [_message_to_gemini(message) for message in request.messages]
         payload: dict[str, Any] = {"contents": contents}
 
-        response = await self._client.post(url, json=payload)
+        try:
+            response = await self._client.post(
+                url,
+                json=payload,
+                timeout=self._settings.gateway_timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(f"Gemini request timed out: {exc}", status_code=504) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError(f"Gemini request failed: {exc}", status_code=502) from exc
         if response.status_code >= 400:
             body = response.text or ""
             raise ProviderError(
