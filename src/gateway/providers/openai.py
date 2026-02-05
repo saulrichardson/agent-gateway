@@ -39,9 +39,19 @@ class OpenAIProvider(BaseProvider):
         if reasoning:
             payload["reasoning"] = reasoning
 
-        response_format = metadata.get("response_format")
-        if response_format:
-            payload["response_format"] = response_format
+        # OpenAI Responses API: structured outputs are configured via `text.format`,
+        # not `response_format` (which is used in Chat Completions).
+        #
+        # To keep the gateway client ergonomic, we accept:
+        #   - metadata["text"] as a full `text` object (preferred, matches upstream API), and
+        #   - metadata["response_format"] as a legacy/compat shim which we map to `text.format`.
+        text_cfg = metadata.get("text")
+        if isinstance(text_cfg, dict) and text_cfg:
+            payload["text"] = text_cfg
+        else:
+            response_format = metadata.get("response_format")
+            if isinstance(response_format, dict) and response_format:
+                payload["text"] = {"format": response_format}
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -101,9 +111,13 @@ class OpenAIProvider(BaseProvider):
         if reasoning:
             payload["reasoning"] = reasoning
 
-        response_format = metadata.get("response_format")
-        if response_format:
-            payload["response_format"] = response_format
+        text_cfg = metadata.get("text")
+        if isinstance(text_cfg, dict) and text_cfg:
+            payload["text"] = text_cfg
+        else:
+            response_format = metadata.get("response_format")
+            if isinstance(response_format, dict) and response_format:
+                payload["text"] = {"format": response_format}
 
         headers = {
             "Authorization": f"Bearer {api_key}",
