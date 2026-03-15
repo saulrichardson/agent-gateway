@@ -7,12 +7,23 @@ import base64
 import json
 import mimetypes
 import os
+import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
 import httpx
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 DEFAULT_BASE_URL = os.getenv("GATEWAY_URL", "http://127.0.0.1:8000")
+
+
+class GatewayJobFailedError(RuntimeError):
+    """Raised when a gateway response job reaches a failed terminal state."""
+
+    def __init__(self, job_id: str, error: dict[str, Any]) -> None:
+        super().__init__(error.get("message") or f"Gateway response job failed: {job_id}")
+        self.job_id = job_id
+        self.error = error
 
 
 class GatewayAgentClient:
@@ -29,6 +40,19 @@ class GatewayAgentClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception_type(httpx.HTTPError),
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+            reraise=True,
+        ):
+            with attempt:
+                response = await self._client.request(method, path, **kwargs)
+                response.raise_for_status()
+                return response
+        raise RuntimeError("unreachable")
 
     async def stream_response(
         self,
@@ -86,36 +110,97 @@ class GatewayAgentClient:
         metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
+        use_jobs: bool = False,
+        job_poll_interval: float = 0.5,
     ) -> dict[str, Any]:
-        """Collect the streaming response and return the final text + metadata."""
+        """Execute a one-shot completion and return text + metadata."""
 
-        deltas: list[str] = []
-        completed_payload: dict[str, Any] | None = None
-
-        async for event in self.stream_response(
-            model=model,
-            input_messages=input_messages,
-            response_format=response_format,
-            reasoning=reasoning,
-            metadata=metadata,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        ):
-            if event["event"] == "response.output_text.delta":
-                data = event["data"] or {}
-                if "delta" in data:
-                    delta_text = data.get("delta") or ""
-                else:
-                    output_text = data.get("output_text") or []
-                    delta_text = "".join(str(chunk) for chunk in output_text)
-                deltas.append(str(delta_text))
-            elif event["event"] == "response.completed":
-                completed_payload = event["data"]
-
-        return {
-            "text": "".join(deltas),
-            "meta": completed_payload or {},
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": input_messages,
+            "stream": False,
         }
+        if response_format:
+            payload["response_format"] = response_format
+        if reasoning:
+            payload["reasoning"] = reasoning
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = max_output_tokens
+        if metadata:
+            payload["metadata"] = metadata
+
+        if use_jobs:
+            idempotency_key = f"respjob_{uuid.uuid4().hex}"
+            job = await self.submit_response_job(
+                model=model,
+                input_messages=input_messages,
+                response_format=response_format,
+                reasoning=reasoning,
+                metadata=metadata,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                idempotency_key=idempotency_key,
+            )
+            return await self.await_response_job(job["job_id"], poll_interval=job_poll_interval)
+
+        response = await self._client.post("/v1/responses", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "text": data.get("text", ""),
+            "meta": data.get("meta", {}) or {},
+        }
+
+    async def submit_response_job(
+        self,
+        *,
+        model: str,
+        input_messages: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        reasoning: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": input_messages,
+            "stream": False,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        if reasoning:
+            payload["reasoning"] = reasoning
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = max_output_tokens
+        if metadata:
+            payload["metadata"] = metadata
+
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        response = await self._request("POST", "/v1/responses/jobs", json=payload, headers=headers)
+        return response.json()
+
+    async def get_response_job(self, job_id: str) -> dict[str, Any]:
+        response = await self._request("GET", f"/v1/responses/jobs/{job_id}")
+        return response.json()
+
+    async def await_response_job(self, job_id: str, *, poll_interval: float = 0.5) -> dict[str, Any]:
+        while True:
+            payload = await self.get_response_job(job_id)
+            status = payload.get("status")
+            if status == "succeeded":
+                return {
+                    "text": payload.get("text", ""),
+                    "meta": payload.get("meta", {}) or {},
+                }
+            if status == "failed":
+                raise GatewayJobFailedError(job_id, payload.get("error") or {})
+            await asyncio.sleep(poll_interval)
 
 
 def build_user_message(

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # Default timeout for upstream provider calls. Vision OCR can legitimately take
     # longer than 30s, so use a more forgiving default; can be overridden via .env.
     gateway_timeout_seconds: float = Field(default=120.0, alias="GATEWAY_TIMEOUT_SECONDS")
+    response_job_retry_attempts: int = Field(default=3, alias="RESPONSE_JOB_RETRY_ATTEMPTS")
+    response_job_retry_backoff_seconds: float = Field(
+        default=1.0,
+        alias="RESPONSE_JOB_RETRY_BACKOFF_SECONDS",
+    )
     default_provider: str | None = Field(default=None, alias="DEFAULT_PROVIDER")
 
     # Provider credentials (optional until you supply real keys)

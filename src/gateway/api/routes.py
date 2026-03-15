@@ -10,14 +10,20 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from ..logging import bind_trace
 from ..models import AgentEnvelope, ChatRequest, Message, Role
 from ..services.gateway import GatewayService
 from ..settings import Settings
 from .errors import map_exception
-from .schemas import ResponseInputMessage, ResponseRequest
+from .schemas import (
+    ResponseInputMessage,
+    ResponseJobError,
+    ResponseJobStatusResponse,
+    ResponseJobSubmitResponse,
+    ResponseRequest,
+)
 from .sse import format_event, sse_response
 
 logger = structlog.get_logger(__name__)
@@ -67,12 +73,12 @@ async def readiness(request: Request) -> dict[str, object]:
     return {"status": "ready", "details": details}
 
 
-@router.post("/v1/responses")
+@router.post("/v1/responses", response_model=None)
 async def create_response(
     payload: ResponseRequest,
     request: Request,
     gateway: GatewayService = Depends(get_gateway),
-) -> StreamingResponse:
+) -> StreamingResponse | JSONResponse:
     settings: Settings = gateway._settings
     raw_body = await request.body()
     bytes_in = _body_size(raw_body, payload, request)
@@ -87,6 +93,17 @@ async def create_response(
     bind_trace(trace_id=trace_id, provider=provider_name, model=upstream_model)
 
     start = time.perf_counter()
+    if payload.stream is False:
+        return await _complete_non_streaming(
+            gateway=gateway,
+            chat_request=chat_request,
+            trace_id=trace_id,
+            provider_name=provider_name,
+            upstream_model=upstream_model,
+            bytes_in=bytes_in,
+            start=start,
+        )
+
     if provider_name == "openai":
         return await _stream_openai(
             gateway=gateway,
@@ -164,6 +181,113 @@ async def create_response(
     return sse_response(event_generator())
 
 
+@router.post("/v1/responses/jobs", response_model=ResponseJobSubmitResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_response_job(
+    payload: ResponseRequest,
+    request: Request,
+    gateway: GatewayService = Depends(get_gateway),
+) -> ResponseJobSubmitResponse:
+    if payload.stream is not False:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": {
+                    "message": "Response jobs only support non-streaming requests",
+                    "code": "stream_not_supported_for_jobs",
+                }
+            },
+        )
+
+    settings: Settings = gateway._settings
+    provider_name, upstream_model = _parse_model_identifier(payload.model, settings.default_provider)
+    if provider_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"message": "Provider must be specified", "code": "provider_required"}},
+        )
+
+    chat_request = _to_chat_request(payload, provider_name, upstream_model)
+    trace_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+    idempotency_key = request.headers.get("idempotency-key")
+    bind_trace(trace_id=trace_id, provider=provider_name, model=upstream_model)
+    try:
+        job = await gateway.submit_response_job(
+            chat_request,
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise map_exception(exc, provider_name) from exc
+    return ResponseJobSubmitResponse(
+        job_id=job.job_id,
+        status=job.status,
+        created_at=job.created_at,
+    )
+
+
+@router.get("/v1/responses/jobs/{job_id}", response_model=ResponseJobStatusResponse)
+async def get_response_job(
+    job_id: str,
+    gateway: GatewayService = Depends(get_gateway),
+) -> ResponseJobStatusResponse:
+    record = gateway.get_response_job(job_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"message": f"Response job not found: {job_id}", "code": "job_not_found"}},
+        )
+    return _response_job_status(record.to_dict())
+
+
+async def _complete_non_streaming(
+    *,
+    gateway: GatewayService,
+    chat_request: ChatRequest,
+    trace_id: str,
+    provider_name: str,
+    upstream_model: str,
+    bytes_in: int,
+    start: float,
+) -> JSONResponse:
+    try:
+        response = await gateway.chat(chat_request, trace_id=trace_id)
+    except Exception as exc:  # noqa: BLE001
+        mapped = map_exception(exc, provider_name)
+        logger.warning(
+            "response.failed",
+            trace_id=trace_id,
+            provider=provider_name,
+            model=upstream_model,
+            error=str(exc),
+        )
+        raise mapped from exc
+
+    duration = time.perf_counter() - start
+    logger.info(
+        "response.complete",
+        trace_id=trace_id,
+        provider=response.provider,
+        model=response.model,
+        duration_ms=round(duration * 1000, 2),
+        usage=response.usage,
+        bytes_in=bytes_in,
+        provider_request_id=response.provider_request_id,
+    )
+
+    return JSONResponse(
+        {
+            "text": response.output_text,
+            "meta": {
+                "provider": response.provider,
+                "model": response.model,
+                "usage": response.usage or {},
+                "trace_id": response.trace_id,
+                "provider_request_id": response.provider_request_id,
+            },
+        }
+    )
+
+
 @router.post("/v1/agents/messages", status_code=status.HTTP_202_ACCEPTED)
 async def publish_agent_message(
     payload: AgentEnvelope,
@@ -214,6 +338,8 @@ def _convert_message(message: ResponseInputMessage) -> Message:
     role = Role(message.role)
     content = _normalize_content(message.content)
     return Message(role=role, content=content)
+
+
 def _body_size(raw_body: bytes, payload: ResponseRequest, request: Request) -> int:
     if raw_body:
         return len(raw_body)
@@ -336,4 +462,21 @@ def _normalize_content(content: Any) -> Any:
 def _is_structured_chunk(entry: Any) -> bool:
     return isinstance(entry, dict) and (
         "type" in entry or "image_url" in entry or "image_base64" in entry or "image" in entry
+    )
+
+
+def _response_job_status(payload: dict[str, Any]) -> ResponseJobStatusResponse:
+    error_payload = payload.get("error")
+    return ResponseJobStatusResponse(
+        job_id=str(payload["job_id"]),
+        status=payload["status"],
+        trace_id=payload.get("trace_id"),
+        provider=payload.get("provider"),
+        model=payload.get("model"),
+        attempts=int(payload.get("attempts") or 0),
+        text=payload.get("text"),
+        meta=payload.get("meta"),
+        error=ResponseJobError.model_validate(error_payload) if error_payload else None,
+        created_at=payload["created_at"],
+        updated_at=payload["updated_at"],
     )
